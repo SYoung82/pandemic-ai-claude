@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   MapPin,
   User,
@@ -12,14 +12,25 @@ import {
   Check,
   Copy,
 } from "lucide-react";
+import useWebSocket from "../hooks/useWebSocket";
+import {
+  GameState,
+  Cities,
+  CityPositions,
+  CityConnection,
+  Player,
+  DiseaseColor,
+  WebSocketMessage
+} from "../types";
+import { generateGameId, generatePlayerId, areCitiesConnected } from "../utils/gameLogic";
+import { getColorClass, getTextColorClass, INITIAL_GAME_STATE, PLAYER_ROLES } from "../utils/constants";
 
 export default function PandemicGame() {
-  // Mock websocket connection for multiplayer functionality
-  const [socket, setSocket] = useState(null);
-  const mapRef = useRef(null);
+  // Define refs
+  const mapRef = useRef<HTMLDivElement>(null);
 
   // Game state
-  const [gameState, setGameState] = useState({
+  const [gameState, setGameState] = useState<GameState>({
     gameId: "",
     started: false,
     players: [],
@@ -40,24 +51,71 @@ export default function PandemicGame() {
   });
 
   // UI state
-  const [showSidebar, setShowSidebar] = useState(false);
-  const [playerName, setPlayerName] = useState("");
-  const [selectedRole, setSelectedRole] = useState("Medic");
-  const [joinGameId, setJoinGameId] = useState("");
-  const [showJoinGame, setShowJoinGame] = useState(false);
-  const [isHost, setIsHost] = useState(false);
-  const [playerId, setPlayerId] = useState("");
-  const [linkCopied, setLinkCopied] = useState(false);
+  const [showSidebar, setShowSidebar] = useState<boolean>(false);
+  const [playerName, setPlayerName] = useState<string>("");
+  const [selectedRole, setSelectedRole] = useState<string>("Medic");
+  const [joinGameId, setJoinGameId] = useState<string>("");
+  const [showJoinGame, setShowJoinGame] = useState<boolean>(false);
+  const [isHost, setIsHost] = useState<boolean>(false);
+  const [playerId, setPlayerId] = useState<string>("");
+  const [linkCopied, setLinkCopied] = useState<boolean>(false);
 
   // Map configuration
-  const [cities, setCities] = useState({});
-  const [cityPositions, setCityPositions] = useState({});
-  const [connections, setConnections] = useState([]);
+  const [cities, setCities] = useState<Cities>({});
+  const [cityPositions, setCityPositions] = useState<CityPositions>({});
+  const [connections, setConnections] = useState<CityConnection[]>([]);
+
+  // Handle WebSocket messages
+  const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
+    console.log('Received WebSocket message:', message);
+
+    switch (message.type) {
+      case 'GAME_UPDATE':
+        // Update game state from server
+        if (message.payload.gameState) {
+          setGameState(message.payload.gameState);
+        }
+        break;
+
+      case 'PLAYER_JOINED':
+        // Add new player to the game
+        if (message.payload.player) {
+          setGameState(prev => ({
+            ...prev,
+            players: [...prev.players, message.payload.player]
+          }));
+        }
+        break;
+
+      case 'GAME_STARTED':
+        // Update game state when game starts
+        if (message.payload.gameState) {
+          setGameState(message.payload.gameState);
+          setCities(message.payload.cities);
+        }
+        break;
+
+      case 'ERROR':
+        // Handle errors
+        alert(message.payload.message);
+        break;
+
+      default:
+        console.log('Unknown message type:', message.type);
+    }
+  }, []);
+
+  // Initialize WebSocket with memoized handler
+  const { isConnected, error, sendMessage } = useWebSocket(
+    gameState.gameId,
+    isHost,
+    handleWebSocketMessage
+  );
 
   // Initialize map data
-  useEffect(function () {
+  useEffect(() => {
     // City data with relative positions
-    const initialCityPositions = {
+    const initialCityPositions: CityPositions = {
       // North America
       Atlanta: { x: 25, y: 35 },
       Chicago: { x: 22, y: 30 },
@@ -117,7 +175,7 @@ export default function PandemicGame() {
     setCityPositions(initialCityPositions);
 
     // City data with disease color associations
-    const initialCities = {
+    const initialCities: Cities = {
       // Blue cities (North America & Europe)
       Atlanta: {
         color: "blue",
@@ -355,7 +413,7 @@ export default function PandemicGame() {
     setCities(initialCities);
 
     // City connections (routes between cities)
-    const cityConnections = [
+    const cityConnections: CityConnection[] = [
       // North America connections
       ["San Francisco", "Chicago"],
       ["San Francisco", "Los Angeles"],
@@ -450,54 +508,8 @@ export default function PandemicGame() {
     setConnections(cityConnections);
   }, []);
 
-  // Available player roles
-  const roles = [
-    {
-      name: "Medic",
-      color: "orange",
-      ability:
-        "Automatically removes all cubes of one color when treating a disease",
-    },
-    {
-      name: "Scientist",
-      color: "white",
-      ability: "Only needs 4 cards to discover a cure",
-    },
-    {
-      name: "Researcher",
-      color: "brown",
-      ability: "Can share knowledge more easily",
-    },
-    {
-      name: "Operations Expert",
-      color: "green",
-      ability: "Can build research stations without city cards",
-    },
-    { name: "Dispatcher", color: "pink", ability: "Can move other players" },
-    {
-      name: "Contingency Planner",
-      color: "lightblue",
-      ability: "Can reuse event cards",
-    },
-    {
-      name: "Quarantine Specialist",
-      color: "darkgreen",
-      ability: "Prevents outbreaks in their location and adjacent cities",
-    },
-  ];
-
-  // Generate unique game ID
-  function generateGameId() {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  }
-
-  // Generate unique player ID
-  function generatePlayerId() {
-    return Math.random().toString(36).substring(2, 10);
-  }
-
   // Create a new game
-  function createGame() {
+  const createGame = useCallback(() => {
     if (playerName.trim() === "") {
       alert("Please enter your name");
       return;
@@ -506,7 +518,7 @@ export default function PandemicGame() {
     const gameId = generateGameId();
     const pid = generatePlayerId();
 
-    const newPlayer = {
+    const newPlayer: Player = {
       id: pid,
       name: playerName,
       role: selectedRole,
@@ -516,40 +528,37 @@ export default function PandemicGame() {
     };
 
     // Set up new game state
-    setGameState(function (prev) {
-      return {
-        ...prev,
-        gameId,
-        players: [newPlayer],
-      };
-    });
+    setGameState(prev => ({
+      ...prev,
+      gameId,
+      players: [newPlayer],
+    }));
 
     setIsHost(true);
     setPlayerId(pid);
 
-    // In a real implementation, this would create the game on the server
-    console.log(`Created game with ID: ${gameId}`);
-
-    // Simulate network connection by pausing briefly
-    setTimeout(function () {
-      // In a real implementation, we would connect to a game server here
-      console.log("Connected to game server!");
-    }, 500);
-  }
+    // In a real implementation with the backend, we'd send a create game request
+    sendMessage("CREATE_GAME", {
+      gameId,
+      player: newPlayer
+    });
+  }, [playerName, selectedRole, sendMessage])
 
   // Join an existing game
-  function joinGame() {
+  const joinGame = useCallback(() => {
+    console.log({ playerName, joinGameId })
     if (playerName.trim() === "" || joinGameId.trim() === "") {
       alert("Please enter your name and game ID");
       return;
     }
 
-    // In a real implementation, this would check if the game exists on the server
-    console.log(`Joining game with ID: ${joinGameId}`);
+    if (!isConnected) {
+
+    }
 
     const pid = generatePlayerId();
 
-    const newPlayer = {
+    const newPlayer: Player = {
       id: pid,
       name: playerName,
       role: selectedRole,
@@ -558,29 +567,32 @@ export default function PandemicGame() {
       actions: 4,
     };
 
-    // Simulate network connection by pausing briefly
-    setTimeout(function () {
-      // In a real implementation, we would get the current game state from the server
-      setGameState(function (prev) {
-        return {
-          ...prev,
-          gameId: joinGameId,
-          players: [...prev.players, newPlayer],
-        };
-      });
+    setPlayerId(pid);
+    setIsHost(false);
 
-      setPlayerId(pid);
-      setIsHost(false);
-    }, 1000);
-  }
+    // Then update game state with the joinGameId
+    setGameState(prev => ({
+      ...prev,
+      gameId: joinGameId,
+    }));
+
+    // Send join game message after state update
+    // This will happen on the next render when sendMessage has the updated gameId
+    setTimeout(() => {
+      sendMessage("JOIN_GAME", {
+        gameId: joinGameId,
+        player: newPlayer
+      });
+    }, 0);
+  }, [playerName, joinGameId, selectedRole, sendMessage])
 
   // Copy game link to clipboard
   function copyGameLink() {
     // In a real implementation, this would be a shareable link
     const gameLink = `https://pandemic-game.example.com/join/${gameState.gameId}`;
-    navigator.clipboard.writeText(gameLink).then(function () {
+    navigator.clipboard.writeText(gameLink).then(() => {
       setLinkCopied(true);
-      setTimeout(function () {
+      setTimeout(() => {
         setLinkCopied(false);
       }, 2000);
     });
@@ -599,53 +611,41 @@ export default function PandemicGame() {
 
     // Infect 3 cities with 3 cubes
     for (let i = 0; i < 3; i++) {
-      const randomCity =
-        cityNames[Math.floor(Math.random() * cityNames.length)];
-      const cityColor = updatedCities[randomCity].color;
+      const randomCity = cityNames[Math.floor(Math.random() * cityNames.length)];
+      const cityColor = updatedCities[randomCity].color as DiseaseColor;
       updatedCities[randomCity].infections[cityColor] += 3;
     }
 
     // Infect 3 different cities with 2 cubes
     for (let i = 0; i < 3; i++) {
-      const randomCity =
-        cityNames[Math.floor(Math.random() * cityNames.length)];
-      const cityColor = updatedCities[randomCity].color;
+      const randomCity = cityNames[Math.floor(Math.random() * cityNames.length)];
+      const cityColor = updatedCities[randomCity].color as DiseaseColor;
       updatedCities[randomCity].infections[cityColor] += 2;
     }
 
     // Infect 3 more different cities with 1 cube
     for (let i = 0; i < 3; i++) {
-      const randomCity =
-        cityNames[Math.floor(Math.random() * cityNames.length)];
-      const cityColor = updatedCities[randomCity].color;
+      const randomCity = cityNames[Math.floor(Math.random() * cityNames.length)];
+      const cityColor = updatedCities[randomCity].color as DiseaseColor;
       updatedCities[randomCity].infections[cityColor] += 1;
     }
 
     setCities(updatedCities);
 
-    setGameState(function (prev) {
-      return {
-        ...prev,
-        started: true,
-      };
+    // In a real implementation with the backend, we'd send a start game request
+    sendMessage("START_GAME", {
+      gameId: gameState.gameId,
+      cities: updatedCities
     });
 
-    // In a real implementation, this would broadcast to all players that the game has started
-    console.log("Game started!");
-  }
-
-  // Check if cities are connected (for movement)
-  function areCitiesConnected(city1, city2) {
-    return connections.some(function (conn) {
-      return (
-        (conn[0] === city1 && conn[1] === city2) ||
-        (conn[0] === city2 && conn[1] === city1)
-      );
-    });
+    setGameState(prev => ({
+      ...prev,
+      started: true,
+    }));
   }
 
   // Handle player movement
-  function movePlayer(cityName) {
+  function movePlayer(cityName: string) {
     if (!gameState.started || gameState.gameOver) return;
 
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
@@ -654,13 +654,9 @@ export default function PandemicGame() {
     if (currentPlayer.id !== playerId) return;
 
     // Check if move is valid (cities must be connected)
-    if (
-      !areCitiesConnected(currentPlayer.location, cityName) &&
-      currentPlayer.location !== cityName
-    ) {
-      alert(
-        `Cannot move directly from ${currentPlayer.location} to ${cityName}. Cities must be connected.`
-      );
+    if (!areCitiesConnected(currentPlayer.location, cityName, connections) &&
+      currentPlayer.location !== cityName) {
+      alert(`Cannot move directly from ${currentPlayer.location} to ${cityName}. Cities must be connected.`);
       return;
     }
 
@@ -672,21 +668,23 @@ export default function PandemicGame() {
         actions: currentPlayer.actions - 1,
       };
 
-      // Update game state
-      setGameState(function (prev) {
-        return {
-          ...prev,
-          players: updatedPlayers,
-        };
+      // In a real implementation with the backend, we'd send a move player request
+      sendMessage("MOVE_PLAYER", {
+        gameId: gameState.gameId,
+        playerId: playerId,
+        location: cityName
       });
 
-      // In a real implementation, this would broadcast the movement to all players
-      console.log(`${currentPlayer.name} moved to ${cityName}`);
+      // Update game state
+      setGameState(prev => ({
+        ...prev,
+        players: updatedPlayers,
+      }));
     }
   }
 
   // Treat disease in current city
-  function treatDisease(color) {
+  function treatDisease(color: DiseaseColor) {
     if (!gameState.started || gameState.gameOver) return;
 
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
@@ -697,7 +695,7 @@ export default function PandemicGame() {
     const currentCity = currentPlayer.location;
     const city = cities[currentCity];
 
-    if (city.infections[color] > 0 && currentPlayer.actions > 0) {
+    if (city && city.infections[color] > 0 && currentPlayer.actions > 0) {
       const updatedCities = { ...cities };
       const isCured = gameState.diseases[color].cured;
 
@@ -721,20 +719,21 @@ export default function PandemicGame() {
         actions: currentPlayer.actions - 1,
       };
 
-      // Update game state
-      setCities(updatedCities);
-
-      setGameState(function (prev) {
-        return {
-          ...prev,
-          players: updatedPlayers,
-        };
+      // In a real implementation with the backend, we'd send a treat disease request
+      sendMessage("TREAT_DISEASE", {
+        gameId: gameState.gameId,
+        playerId: playerId,
+        city: currentCity,
+        color: color,
+        cubes: cubesToRemove
       });
 
-      // In a real implementation, this would broadcast the action to all players
-      console.log(
-        `${currentPlayer.name} treated ${color} disease in ${currentCity}`
-      );
+      // Update game state
+      setCities(updatedCities);
+      setGameState(prev => ({
+        ...prev,
+        players: updatedPlayers,
+      }));
     }
   }
 
@@ -750,7 +749,7 @@ export default function PandemicGame() {
     const currentCity = currentPlayer.location;
     const city = cities[currentCity];
 
-    if (!city.researchStation && currentPlayer.actions > 0) {
+    if (city && !city.researchStation && currentPlayer.actions > 0) {
       // In a full game, we would check if the player has the city card
       // For the Operations Expert, no city card is needed
       const canBuild =
@@ -770,27 +769,26 @@ export default function PandemicGame() {
           actions: currentPlayer.actions - 1,
         };
 
-        // Update game state
-        setCities(updatedCities);
-
-        setGameState(function (prev) {
-          return {
-            ...prev,
-            players: updatedPlayers,
-            researchStations: [...prev.researchStations, currentCity],
-          };
+        // In a real implementation with the backend, we'd send a build research station request
+        sendMessage("BUILD_RESEARCH_STATION", {
+          gameId: gameState.gameId,
+          playerId: playerId,
+          city: currentCity
         });
 
-        // In a real implementation, this would broadcast the action to all players
-        console.log(
-          `${currentPlayer.name} built a research station in ${currentCity}`
-        );
+        // Update game state
+        setCities(updatedCities);
+        setGameState(prev => ({
+          ...prev,
+          players: updatedPlayers,
+          researchStations: [...prev.researchStations, currentCity],
+        }));
       }
     }
   }
 
   // Discover a cure
-  function discoverCure(color) {
+  function discoverCure(color: DiseaseColor) {
     if (!gameState.started || gameState.gameOver) return;
 
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
@@ -802,7 +800,7 @@ export default function PandemicGame() {
     const city = cities[currentCity];
 
     // Check if there's a research station in the current city
-    if (city.researchStation && currentPlayer.actions > 0) {
+    if (city && city.researchStation && currentPlayer.actions > 0) {
       // In a full game, we would check if the player has the required cards
       // Scientist needs 4 cards, others need 5
       const requiredCards = currentPlayer.role === "Scientist" ? 4 : 5;
@@ -821,25 +819,23 @@ export default function PandemicGame() {
       };
 
       // Check if all diseases are cured (win condition)
-      const allCured = Object.values(updatedDiseases).every(function (disease) {
-        return disease.cured;
+      const allCured = Object.values(updatedDiseases).every(disease => disease.cured);
+
+      // In a real implementation with the backend, we'd send a discover cure request
+      sendMessage("DISCOVER_CURE", {
+        gameId: gameState.gameId,
+        playerId: playerId,
+        color: color
       });
 
       // Update game state
-      setGameState(function (prev) {
-        return {
-          ...prev,
-          diseases: updatedDiseases,
-          players: updatedPlayers,
-          gameWon: allCured,
-          gameOver: allCured,
-        };
-      });
-
-      // In a real implementation, this would broadcast the action to all players
-      console.log(
-        `${currentPlayer.name} discovered a cure for ${color} disease`
-      );
+      setGameState(prev => ({
+        ...prev,
+        diseases: updatedDiseases,
+        players: updatedPlayers,
+        gameWon: allCured,
+        gameOver: allCured,
+      }));
     }
   }
 
@@ -852,6 +848,12 @@ export default function PandemicGame() {
     // Can only end your own turn
     if (currentPlayer.id !== playerId) return;
 
+    // In a real implementation with the backend, we'd send an end turn request
+    sendMessage("END_TURN", {
+      gameId: gameState.gameId,
+      playerId: playerId
+    });
+
     // Reset actions for current player
     const updatedPlayers = [...gameState.players];
     updatedPlayers[gameState.currentPlayerIndex] = {
@@ -860,8 +862,7 @@ export default function PandemicGame() {
     };
 
     // Move to next player
-    const nextPlayerIndex =
-      (gameState.currentPlayerIndex + 1) % gameState.players.length;
+    const nextPlayerIndex = (gameState.currentPlayerIndex + 1) % gameState.players.length;
 
     // Infect cities based on infection rate
     const updatedCities = { ...cities };
@@ -870,9 +871,8 @@ export default function PandemicGame() {
     let outbreakCount = gameState.outbreaks;
 
     for (let i = 0; i < gameState.infectionRate; i++) {
-      const randomCity =
-        cityNames[Math.floor(Math.random() * cityNames.length)];
-      const cityColor = updatedCities[randomCity].color;
+      const randomCity = cityNames[Math.floor(Math.random() * cityNames.length)];
+      const cityColor = updatedCities[randomCity].color as DiseaseColor;
 
       // Add infection cube
       updatedCities[randomCity].infections[cityColor] += 1;
@@ -893,53 +893,23 @@ export default function PandemicGame() {
     setCities(updatedCities);
 
     // Update game state
-    setGameState(function (prev) {
-      return {
-        ...prev,
-        players: updatedPlayers,
-        currentPlayerIndex: nextPlayerIndex,
-        outbreaks: outbreakCount,
-        gameOver: isGameOver || prev.gameOver,
-      };
-    });
-
-    // In a real implementation, this would broadcast the turn change to all players
-    console.log(
-      `${currentPlayer.name} ended their turn. It's now ${updatedPlayers[nextPlayerIndex].name}'s turn.`
-    );
-  }
-
-  // Connect to game server (mock implementation)
-  function connectToServer(gameId) {
-    console.log(`Connecting to game server for game ${gameId}...`);
-    // In a real implementation, this would establish a WebSocket connection
-    const mockSocket = {
-      send: function (message) {
-        console.log("Sending message:", message);
-      },
-      close: function () {
-        console.log("WebSocket closed");
-      },
-    };
-
-    setSocket(mockSocket);
-
-    // Set up event listeners for incoming messages
-    // For demo purposes, we're not implementing the actual message handling
-  }
-
-  // Disconnect from game server
-  function disconnectFromServer() {
-    if (socket) {
-      socket.close();
-      setSocket(null);
-    }
+    setGameState(prev => ({
+      ...prev,
+      players: updatedPlayers,
+      currentPlayerIndex: nextPlayerIndex,
+      outbreaks: outbreakCount,
+      gameOver: isGameOver || prev.gameOver,
+    }));
   }
 
   // Reset the game
   function resetGame() {
-    // In a real implementation, this would disconnect from the server
-    disconnectFromServer();
+    // In a real implementation, this would send a reset game message to the server
+    if (gameState.gameId) {
+      sendMessage("RESET_GAME", {
+        gameId: gameState.gameId
+      });
+    }
 
     setGameState({
       gameId: "",
@@ -967,58 +937,16 @@ export default function PandemicGame() {
     setShowJoinGame(false);
 
     // Reinitialize city data with clean infection counts
-    const cleanCities = Object.entries(cities).reduce(function (
-      acc,
-      [cityName, cityData]
-    ) {
+    const cleanCities = Object.entries(cities).reduce((acc, [cityName, cityData]) => {
       acc[cityName] = {
         ...cityData,
         infections: { red: 0, blue: 0, yellow: 0, black: 0 },
         researchStation: cityName === "Atlanta",
       };
       return acc;
-    },
-    {});
+    }, {} as Cities);
 
     setCities(cleanCities);
-  }
-
-  // For real implementation, we'd need to handle WebSocket messages
-  useEffect(function () {
-    return function () {
-      // Cleanup socket connection when component unmounts
-      disconnectFromServer();
-    };
-  }, []);
-
-  function getColorClass(color) {
-    switch (color) {
-      case "red":
-        return "bg-red-500";
-      case "blue":
-        return "bg-blue-500";
-      case "yellow":
-        return "bg-yellow-500";
-      case "black":
-        return "bg-gray-800";
-      default:
-        return "";
-    }
-  }
-
-  function getTextColorClass(color) {
-    switch (color) {
-      case "red":
-        return "text-red-500";
-      case "blue":
-        return "text-blue-500";
-      case "yellow":
-        return "text-yellow-500";
-      case "black":
-        return "text-gray-800";
-      default:
-        return "";
-    }
   }
 
   const currentPlayer = gameState.players[gameState.currentPlayerIndex] || {};
@@ -1055,9 +983,8 @@ export default function PandemicGame() {
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <div
-          className={`${
-            showSidebar ? "block" : "hidden"
-          } md:block bg-white w-full md:w-64 shadow-lg p-4 overflow-y-auto z-10`}
+          className={`${showSidebar ? "block" : "hidden"
+            } md:block bg-white w-full md:w-64 shadow-lg p-4 overflow-y-auto z-10`}
         >
           {!gameState.gameId ? (
             <div className="mb-6">
@@ -1090,7 +1017,7 @@ export default function PandemicGame() {
                     onChange={(e) => setSelectedRole(e.target.value)}
                     className="w-full p-2 border rounded mb-2"
                   >
-                    {roles.map((role) => (
+                    {PLAYER_ROLES.map((role) => (
                       <option key={role.name} value={role.name}>
                         {role.name}
                       </option>
@@ -1123,7 +1050,7 @@ export default function PandemicGame() {
                     onChange={(e) => setSelectedRole(e.target.value)}
                     className="w-full p-2 border rounded mb-2"
                   >
-                    {roles.map((role) => (
+                    {PLAYER_ROLES.map((role) => (
                       <option key={role.name} value={role.name}>
                         {role.name}
                       </option>
@@ -1217,9 +1144,8 @@ export default function PandemicGame() {
                           key={color}
                           className={`w-6 h-6 rounded-full ${getColorClass(
                             color
-                          )} ${
-                            status.cured ? "border-2 border-green-500" : ""
-                          }`}
+                          )} ${status.cured ? "border-2 border-green-500" : ""
+                            }`}
                           title={status.cured ? "Cured" : "Active"}
                         />
                       )
@@ -1233,11 +1159,10 @@ export default function PandemicGame() {
                 {gameState.players.map((player, index) => (
                   <div
                     key={player.id}
-                    className={`p-2 mb-2 rounded flex items-center ${
-                      index === gameState.currentPlayerIndex
-                        ? "bg-yellow-100 border-l-4 border-yellow-500"
-                        : "bg-gray-100"
-                    }`}
+                    className={`p-2 mb-2 rounded flex items-center ${index === gameState.currentPlayerIndex
+                      ? "bg-yellow-100 border-l-4 border-yellow-500"
+                      : "bg-gray-100"
+                      }`}
                   >
                     <User size={18} className="mr-2" />
                     <div>
@@ -1259,11 +1184,10 @@ export default function PandemicGame() {
 
               {gameState.gameOver && (
                 <div
-                  className={`p-3 rounded mb-4 ${
-                    gameState.gameWon
-                      ? "bg-green-100 text-green-800"
-                      : "bg-red-100 text-red-800"
-                  }`}
+                  className={`p-3 rounded mb-4 ${gameState.gameWon
+                    ? "bg-green-100 text-green-800"
+                    : "bg-red-100 text-red-800"
+                    }`}
                 >
                   <p className="font-bold">
                     {gameState.gameWon ? "You Won!" : "Game Over!"}
@@ -1311,7 +1235,7 @@ export default function PandemicGame() {
                       Build Research Station
                     </button>
 
-                    {["red", "blue", "yellow", "black"].map((color) => (
+                    {(["red", "blue", "yellow", "black"] as DiseaseColor[]).map((color) => (
                       <button
                         key={color}
                         onClick={() => treatDisease(color)}
@@ -1324,7 +1248,7 @@ export default function PandemicGame() {
                       </button>
                     ))}
 
-                    {["red", "blue", "yellow", "black"].map((color) => (
+                    {(["red", "blue", "yellow", "black"] as DiseaseColor[]).map((color) => (
                       <button
                         key={`cure-${color}`}
                         onClick={() => discoverCure(color)}
@@ -1418,14 +1342,13 @@ export default function PandemicGame() {
                     const canMove =
                       isCurrentPlayersTurn &&
                       currentPlayer.actions > 0 &&
-                      areCitiesConnected(currentPlayer.location, cityName);
+                      areCitiesConnected(currentPlayer.location, cityName, connections);
 
                     return (
                       <div
                         key={cityName}
-                        className={`absolute w-12 h-12 transform -translate-x-1/2 -translate-y-1/2 ${
-                          canMove ? "cursor-pointer" : ""
-                        }`}
+                        className={`absolute w-12 h-12 transform -translate-x-1/2 -translate-y-1/2 ${canMove ? "cursor-pointer" : ""
+                          }`}
                         style={{
                           left: `${position.x}%`,
                           top: `${position.y}%`,
@@ -1434,11 +1357,10 @@ export default function PandemicGame() {
                         onClick={() => canMove && movePlayer(cityName)}
                       >
                         <div
-                          className={`w-5 h-5 mx-auto rounded-full ${cityColor} ${
-                            canMove
-                              ? "ring-2 ring-offset-2 ring-white animate-pulse"
-                              : ""
-                          }`}
+                          className={`w-5 h-5 mx-auto rounded-full ${cityColor} ${canMove
+                            ? "ring-2 ring-offset-2 ring-white animate-pulse"
+                            : ""
+                            }`}
                         >
                           {hasInfection && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border border-white"></div>

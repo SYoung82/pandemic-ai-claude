@@ -1,6 +1,7 @@
 /**
  * Game logic utilities for the Pandemic Game
  */
+import { Cities, CityConnection, Diseases, DiseaseColor } from '../types';
 
 /**
  * Checks if two cities are directly connected
@@ -9,7 +10,7 @@
  * @param {Array} connections - Array of connections between cities
  * @returns {boolean} - Whether the cities are connected
  */
-export function areCitiesConnected(city1, city2, connections) {
+export function areCitiesConnected(city1: string, city2: string, connections: CityConnection[]): boolean {
   return connections.some(conn => 
     (conn[0] === city1 && conn[1] === city2) || 
     (conn[0] === city2 && conn[1] === city1)
@@ -23,14 +24,14 @@ export function areCitiesConnected(city1, city2, connections) {
  * @param {number} cubes - Number of cubes to place in each city
  * @returns {Object} - Updated cities object with new infections
  */
-export function infectCities(cities, count, cubes) {
+export function infectCities(cities: Cities, count: number, cubes: number): Cities {
   const updatedCities = { ...cities };
   const cityNames = Object.keys(updatedCities);
-  const infectedCities = [];
+  const infectedCities: string[] = [];
   
   // Select random cities to infect
   for (let i = 0; i < count; i++) {
-    let randomCity;
+    let randomCity: string;
     // Avoid infecting the same city twice
     do {
       randomCity = cityNames[Math.floor(Math.random() * cityNames.length)];
@@ -49,7 +50,7 @@ export function infectCities(cities, count, cubes) {
  * @param {Object} diseases - Object containing disease cure status
  * @returns {boolean} - Whether all diseases are cured
  */
-export function checkAllDiseasesCured(diseases) {
+export function checkAllDiseasesCured(diseases: Diseases): boolean {
   return Object.values(diseases).every(disease => disease.cured);
 }
 
@@ -62,7 +63,13 @@ export function checkAllDiseasesCured(diseases) {
  * @param {Set} outbreakChain - Set of cities that have already had outbreaks in this chain
  * @returns {Object} - Updated cities object after outbreak propagation
  */
-export function processOutbreak(cityName, diseaseColor, cities, connections, outbreakChain = new Set()) {
+export function processOutbreak(
+  cityName: string, 
+  diseaseColor: DiseaseColor, 
+  cities: Cities, 
+  connections: CityConnection[], 
+  outbreakChain: Set<string> = new Set()
+): Cities {
   // Mark this city as having an outbreak
   outbreakChain.add(cityName);
   
@@ -100,7 +107,7 @@ export function processOutbreak(cityName, diseaseColor, cities, connections, out
  * Generate a unique game ID
  * @returns {string} - Unique 6-character game ID
  */
-export function generateGameId() {
+export function generateGameId(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
@@ -108,6 +115,6 @@ export function generateGameId() {
  * Generate a unique player ID
  * @returns {string} - Unique player ID
  */
-export function generatePlayerId() {
+export function generatePlayerId(): string {
   return Math.random().toString(36).substring(2, 10);
 }

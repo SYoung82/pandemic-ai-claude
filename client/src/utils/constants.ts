@@ -1,9 +1,10 @@
 /**
  * Constants and initial data for the Pandemic Game
  */
+import { Role, GameState, GameSettings, DiseaseColor } from '../types';
 
 // Player roles with their abilities
-export const PLAYER_ROLES = [
+export const PLAYER_ROLES: Role[] = [
   { 
     name: 'Medic', 
     color: 'orange', 
@@ -42,7 +43,7 @@ export const PLAYER_ROLES = [
 ];
 
 // Initial game state
-export const INITIAL_GAME_STATE = {
+export const INITIAL_GAME_STATE: GameState = {
   gameId: '',
   started: false,
   players: [],
@@ -63,7 +64,7 @@ export const INITIAL_GAME_STATE = {
 };
 
 // Game settings
-export const GAME_SETTINGS = {
+export const GAME_SETTINGS: GameSettings = {
   MAX_PLAYERS: 4,
   ACTIONS_PER_TURN: 4,
   STARTING_LOCATION: 'Atlanta',
@@ -74,7 +75,7 @@ export const GAME_SETTINGS = {
 };
 
 // Color utilities
-export function getColorClass(color) {
+export function getColorClass(color: DiseaseColor | string): string {
   switch (color) {
     case 'red': return 'bg-red-500';
     case 'blue': return 'bg-blue-500';
@@ -84,7 +85,7 @@ export function getColorClass(color) {
   }
 }
 
-export function getTextColorClass(color) {
+export function getTextColorClass(color: DiseaseColor | string): string {
   switch (color) {
     case 'red': return 'text-red-500';
     case 'blue': return 'text-blue-500';
@@ -96,7 +97,7 @@ export function getTextColorClass(color) {
 
 // Mock WebSocket for development
 export const createMockWebSocket = () => ({
-  send: function(message) { 
+  send: function(message: string) { 
     console.log('Sending message:', message);
   },
   close: function() {
